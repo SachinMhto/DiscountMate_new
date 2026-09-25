@@ -165,7 +165,7 @@ async function startServer() {
    try {
       if (isManagedCloudRuntime) {
          console.log('Managed runtime detected. Using reverse image search sidecar via REVERSE_IMAGE_SEARCH_SERVICE_URL.');
-      } else {
+      } else if (process.env.DISABLE_REVERSE_IMAGE_SEARCH !== '1') {
          await startReverseImageSearch();
       }
    } catch (err) {

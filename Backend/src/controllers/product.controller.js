@@ -242,7 +242,14 @@ const getProducts = async (req, res) => {
       const db = getDb();
       const coles = db.collection("products");
 
-      const { search, category } = req.query || {};
+      const { search, category, sort = 'name_asc' } = req.query || {};
+      const minPrice = req.query.minPrice == null ? null : Number(req.query.minPrice);
+      const maxPrice = req.query.maxPrice == null ? null : Number(req.query.maxPrice);
+      const retailers = typeof req.query.retailers === 'string'
+         ? req.query.retailers.split(',').filter(Boolean)
+         : [];
+      const hasPricingFilter = minPrice !== null || maxPrice !== null || retailers.length > 0;
+      const usePricingQuery = hasPricingFilter || sort.startsWith('price_');
 
       const pageNumber = Math.max(parseInt(req.query.page, 10) || 1, 1);
       const rawPageSize =
@@ -357,7 +364,8 @@ const getProducts = async (req, res) => {
             latestWoolworthsPricingArr: 0,
             latestIgaPricingArr: 0,
             sortName: 0,
-            cat: 0,
+         cat: 0,
+         minPrice: 0,
          },
       };
 
@@ -366,19 +374,48 @@ const getProducts = async (req, res) => {
        * `pageSizeNumber` docs (not the whole products collection), avoiding Atlas time limits.
        * Pages may include products with no Coles/Woolworths price; the frontend handles that.
        */
+      const priceFields = {
+         coles: '$latestColesPricing.price',
+         woolworths: '$latestWoolworthsPricing.price',
+         iga: '$latestIgaPricing.price',
+      };
+      const requestedStores = retailers.length ? retailers : Object.keys(priceFields);
+      const priceExpression = store => ({
+         $convert: { input: priceFields[store], to: 'double', onError: null, onNull: null },
+      });
+      const priceConditions = requestedStores.map(store => {
+         const value = priceExpression(store);
+         return {
+            $and: [
+               { $gt: [value, 0] },
+               ...(minPrice !== null ? [{ $gte: [value, minPrice] }] : []),
+               ...(maxPrice !== null ? [{ $lte: [value, maxPrice] }] : []),
+            ],
+         };
+      });
+      const pricingFilterStage = { $match: { $expr: { $or: priceConditions } } };
+      const sortPriceStage = {
+         $addFields: {
+            minPrice: {
+               $min: Object.keys(priceFields).map(store => ({
+                  $ifNull: [priceExpression(store), sort === 'price_desc' ? 0 : 999999999],
+               })),
+            },
+         },
+      };
+      const priceSortStages = sort.startsWith('price_')
+         ? [sortPriceStage, { $sort: { minPrice: sort === 'price_desc' ? -1 : 1, _id: 1 } }]
+         : [sortNameStage, { $sort: { sortName: sort === 'name_desc' ? -1 : 1, _id: 1 } }];
+
       const basePipeline = [
          { $match: match },
 
          ...categoryLookupStages,
-
-         sortNameStage,
-
-         { $sort: { sortName: 1, _id: 1 } },
-
+         ...(usePricingQuery ? [...pricingLookupStages, ...(hasPricingFilter ? [pricingFilterStage] : [])] : []),
+         ...priceSortStages,
          { $skip: (pageNumber - 1) * pageSizeNumber },
          { $limit: pageSizeNumber },
-
-         ...pricingLookupStages,
+         ...(!usePricingQuery ? pricingLookupStages : []),
 
          projectPricingStage,
       ];
@@ -387,6 +424,7 @@ const getProducts = async (req, res) => {
       const countPipeline = [
          { $match: match },
          ...categoryNameFilterStages,
+         ...(hasPricingFilter ? [...pricingLookupStages, pricingFilterStage] : []),
          { $count: 'total' },
       ];
 

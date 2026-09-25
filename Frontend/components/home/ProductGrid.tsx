@@ -1,5 +1,5 @@
 // Frontend/components/product/ProductGrid.tsx
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { View, Text, Pressable, ScrollView } from "react-native";
 import ProductCard, { Product } from "./ProductCard";
 import ProductFilterSection from "../common/ProductFilterSection";
@@ -133,6 +133,9 @@ async function fetchProductsPage(
    limit: number,
    category: string | undefined,
    search: string | undefined,
+   priceRange: { min: number | null; max: number | null } | undefined,
+   retailers: string[],
+   sort: string,
    signal?: AbortSignal
 ): Promise<{ items: ApiProduct[]; total: number; totalPages: number }> {
    const params = new URLSearchParams();
@@ -145,6 +148,10 @@ async function fetchProductsPage(
    if (search && search.trim().length > 0) {
       params.set("search", search.trim());
    }
+   if (priceRange?.min != null) params.set("minPrice", String(priceRange.min));
+   if (priceRange?.max != null) params.set("maxPrice", String(priceRange.max));
+   if (retailers.length) params.set("retailers", retailers.join(","));
+   params.set("sort", sort);
 
    const response = await fetch(`${API_URL}/products?${params.toString()}`, {
       signal,
@@ -255,6 +262,10 @@ type ProductGridProps = {
    activeCategory?: string;
    searchQuery?: string;
    priceRangeFilter?: { min: number | null; max: number | null };
+   retailerFilter?: string[];
+   sort?: string;
+   initialPage?: number;
+   onPageChange?: (page: number) => void;
    requireSearch?: boolean;
    useScrollView?: boolean;
    containerClassName?: string;
@@ -264,6 +275,10 @@ const ProductGrid: React.FC<ProductGridProps> = ({
    activeCategory,
    searchQuery,
    priceRangeFilter,
+   retailerFilter = [],
+   sort = "name_asc",
+   initialPage = 1,
+   onPageChange,
    requireSearch = false,
    useScrollView = true,
    containerClassName = "flex-1 px-4 md:px-8 pt-4 pb-10",
@@ -271,7 +286,13 @@ const ProductGrid: React.FC<ProductGridProps> = ({
    const [apiProducts, setApiProducts] = useState<ApiProduct[]>([]);
    const [loading, setLoading] = useState<boolean>(true);
    const [error, setError] = useState<string | null>(null);
-   const [currentPage, setCurrentPage] = useState<number>(1);
+   const [currentPage, setCurrentPage] = useState<number>(initialPage);
+   const firstFilterEffect = useRef(true);
+   const changePage = (next: number | ((previous: number) => number)) => {
+      const resolved = typeof next === 'function' ? next(currentPage) : next;
+      setCurrentPage(resolved);
+      onPageChange?.(resolved);
+   };
    const [totalProducts, setTotalProducts] = useState<number>(0);
    const [totalPagesFromApi, setTotalPagesFromApi] = useState<number | null>(null);
 
@@ -301,6 +322,9 @@ const ProductGrid: React.FC<ProductGridProps> = ({
                pageSize,
                activeCategory,
                searchQuery,
+               priceRangeFilter,
+               retailerFilter,
+               sort,
                ac.signal
             );
 
@@ -324,12 +348,20 @@ const ProductGrid: React.FC<ProductGridProps> = ({
 
       run();
       return () => ac.abort();
-   }, [currentPage, activeCategory, searchQuery, requireSearch]);
+   }, [currentPage, activeCategory, searchQuery, requireSearch, priceRangeFilter?.min, priceRangeFilter?.max, retailerFilter.join(','), sort]);
 
    useEffect(() => {
       // Reset to first page when the category or search query changes
+      if (firstFilterEffect.current) {
+         firstFilterEffect.current = false;
+         return;
+      }
       setCurrentPage(1);
-   }, [activeCategory, searchQuery]);
+   }, [activeCategory, searchQuery, priceRangeFilter?.min, priceRangeFilter?.max, retailerFilter.join(','), sort]);
+
+   useEffect(() => {
+      setCurrentPage(initialPage);
+   }, [initialPage]);
 
    useEffect(() => {
       if (totalPagesFromApi == null || totalPagesFromApi < 1) return;
@@ -341,31 +373,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({
       !!priceRangeFilter &&
       (priceRangeFilter.min != null || priceRangeFilter.max != null);
 
-   const filteredApiProducts: ApiProduct[] = apiProducts.filter((product) => {
-      if (!apiProductHasShelfPrice(product)) {
-         return false;
-      }
-
-      if (!hasPriceRangeFilter) {
-         return true;
-      }
-
-      const unit = parseUnitNumericFromProduct(product);
-
-      if (unit == null) {
-         return true;
-      }
-
-      if (priceRangeFilter?.min != null && unit < priceRangeFilter.min) {
-         return false;
-      }
-
-      if (priceRangeFilter?.max != null && unit > priceRangeFilter.max) {
-         return false;
-      }
-
-      return true;
-   });
+   const filteredApiProducts: ApiProduct[] = apiProducts;
 
    const apiMappedProducts: Product[] = filteredApiProducts.map(mapApiProductToCard);
 
@@ -373,9 +381,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({
    const productsToShow = apiMappedProducts;
 
    // For the "Showing X products" label, prefer the total count returned  by the backend so it reflects all matching products, not just the current page. When a client-side price range filter is active we can only count the products we've actually filtered on the current page, so fall back to that in that case.
-   const overallProductCount = hasPriceRangeFilter
-      ? productsToShow.length
-      : (totalProducts || productsToShow.length);
+   const overallProductCount = totalProducts;
 
    const totalPages = Math.max(
       1,
@@ -393,7 +399,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({
    const content = (
       <>
          {/* Product Filter Section */}
-         <ProductFilterSection productCount={loading ? 0 : overallProductCount} />
+         <ProductFilterSection productCount={loading ? 0 : overallProductCount} hideControls={!!requireSearch} />
 
          {/* Error message */}
          {error && !loading && (
@@ -450,7 +456,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({
                            }`}
                         disabled={!canGoPrev}
                         onPress={() =>
-                           setCurrentPage((prev) => Math.max(1, prev - pageJump))
+                           changePage((prev) => Math.max(1, prev - pageJump))
                         }
                      >
                         <Text
@@ -469,7 +475,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({
                            }`}
                         disabled={!canGoPrev}
                         onPress={() =>
-                           setCurrentPage((prev) => Math.max(1, prev - 1))
+                           changePage((prev) => Math.max(1, prev - 1))
                         }
                      >
                         <Text
@@ -504,7 +510,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({
                            return (
                               <Pressable
                                  key={page}
-                                 onPress={() => setCurrentPage(page)}
+                                 onPress={() => changePage(page)}
                                  className={
                                     isActive
                                        ? "px-4 py-2 rounded-xl bg-emerald-500"
@@ -533,7 +539,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({
                            }`}
                         disabled={!canGoNext}
                         onPress={() =>
-                           setCurrentPage((prev) =>
+                           changePage((prev) =>
                               Math.min(totalPages, prev + 1)
                            )
                         }
@@ -554,7 +560,7 @@ const ProductGrid: React.FC<ProductGridProps> = ({
                            }`}
                         disabled={!canGoNext}
                         onPress={() =>
-                           setCurrentPage((prev) =>
+                           changePage((prev) =>
                               Math.min(totalPages, prev + pageJump)
                            )
                         }

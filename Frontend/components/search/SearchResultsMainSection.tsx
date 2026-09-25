@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from "react";
-import { View, Text } from "react-native";
+import { View, Text, Pressable } from "react-native";
 import SidebarFilters from "./SidebarFilters";
 import ProductGrid from "../home/ProductGrid";
 import ProductCard, { Product } from "../home/ProductCard";
-import { useLocalSearchParams } from "expo-router";
+import { useLocalSearchParams, useRouter } from "expo-router";
 import { ImageSearchResult, useImageSearch } from "../../app/(tabs)/ImageSearchContext";
 
 function buildImageSearchImageUrl(imageUrl: string | null | undefined): string | null {
@@ -60,41 +60,60 @@ function mapImageResultToProduct(result: ImageSearchResult): Product {
 }
 
 export default function SearchResultsMainSection() {
-   const { query, imageSearch } = useLocalSearchParams();
+   const { query, imageSearch, minPrice, maxPrice, retailers, sort: urlSort, page } = useLocalSearchParams();
+   const router = useRouter();
+   const urlString = (value: unknown) => typeof value === "string" ? value : "";
+   const urlNumber = (value: unknown) => {
+      const n = Number(urlString(value));
+      return urlString(value) !== "" && Number.isFinite(n) && n >= 0 ? n : null;
+   };
+   const savedSort = ["name_asc", "name_desc", "price_asc", "price_desc"].includes(urlString(urlSort))
+      ? urlString(urlSort) as "name_asc" | "name_desc" | "price_asc" | "price_desc"
+      : "name_asc";
    const isImageSearch = imageSearch === "true";
    const { results: imageResults } = useImageSearch();
-   const [searchQuery, setSearchQuery] = useState<string>("");
+   const searchQuery = Array.isArray(query) ? (query[0] ?? "").trim() : urlString(query).trim();
+   const [sort, setSort] = useState<"name_asc" | "name_desc" | "price_asc" | "price_desc">(savedSort);
    const [filters, setFilters] = useState<{
       priceRange: { min: number | null; max: number | null };
       retailers: string[];
    }>({
-      priceRange: { min: null, max: null },
-      retailers: [],
+      priceRange: { min: urlNumber(minPrice), max: urlNumber(maxPrice) },
+      retailers: urlString(retailers).split(",").filter(v => ["coles", "woolworths", "iga"].includes(v)),
    });
+   const savedPage = Math.max(1, Number.parseInt(urlString(page), 10) || 1);
+   const updateUrl = (newFilters = filters, newSort = sort, newPage = 1) => {
+      router.replace({ pathname: "/search", params: {
+         query: searchQuery || urlString(query),
+         ...(newFilters.priceRange.min != null ? { minPrice: String(newFilters.priceRange.min) } : {}),
+         ...(newFilters.priceRange.max != null ? { maxPrice: String(newFilters.priceRange.max) } : {}),
+         ...(newFilters.retailers.length ? { retailers: newFilters.retailers.join(",") } : {}),
+         sort: newSort,
+         page: String(newPage),
+      } });
+   };
 
    useEffect(() => {
-      if (typeof query === "string" && query.trim().length > 0) {
-         setSearchQuery(query.trim());
-      } else if (Array.isArray(query) && query.length > 0 && query[0]?.trim().length > 0) {
-         setSearchQuery(query[0].trim());
-      } else {
-         setSearchQuery("");
-      }
-   }, [query]);
+      setSort(savedSort);
+      setFilters({
+         priceRange: { min: urlNumber(minPrice), max: urlNumber(maxPrice) },
+         retailers: urlString(retailers).split(",").filter(v => ["coles", "woolworths", "iga"].includes(v)),
+      });
+   }, [minPrice, maxPrice, retailers, urlSort]);
 
    const handleFiltersChange = (newFilters: {
       priceRange: { min: number | null; max: number | null };
       retailers: string[];
    }) => {
       setFilters(newFilters);
-      // TODO: Apply filters to search results
+      updateUrl(newFilters, sort, 1);
    };
 
    if (isImageSearch) {
       return (
          <View className="bg-[#F9FAFB]">
             <View className="w-full flex-row items-start">
-               <SidebarFilters onFiltersChange={handleFiltersChange} />
+               <SidebarFilters onFiltersChange={handleFiltersChange} initialFilters={filters} />
 
                <View className="flex-1 px-4 md:px-8 py-8">
                   <View className="mb-6">
@@ -134,7 +153,7 @@ export default function SearchResultsMainSection() {
       <View className="bg-[#F9FAFB]">
          <View className="w-full flex-row items-start">
             {/* Sidebar with Filters */}
-            <SidebarFilters onFiltersChange={handleFiltersChange} />
+            <SidebarFilters key={`${filters.priceRange.min}-${filters.priceRange.max}-${filters.retailers.join(',')}`} initialFilters={filters} onFiltersChange={handleFiltersChange} />
 
             {/* Main Content Area */}
             <View className="flex-1 px-4 md:px-8 py-8">
@@ -160,10 +179,26 @@ export default function SearchResultsMainSection() {
                )}
 
                {/* Product Grid */}
+               <View className="flex-row flex-wrap mb-4">
+                  {([
+                     ["name_asc", "Name A–Z"],
+                     ["name_desc", "Name Z–A"],
+                     ["price_asc", "Price low–high"],
+                     ["price_desc", "Price high–low"],
+                  ] as const).map(([value, label]) => (
+                     <Pressable key={value} accessibilityRole="button" onPress={() => { setSort(value); updateUrl(filters, value, 1); }} className="mr-2 mb-2 px-3 py-2 rounded-lg border border-gray-200">
+                        <Text className={sort === value ? "font-bold text-primary_green" : "text-gray-700"}>{label}</Text>
+                     </Pressable>
+                  ))}
+               </View>
                <ProductGrid
                   activeCategory={undefined}
                   searchQuery={searchQuery}
                   priceRangeFilter={filters.priceRange}
+                  retailerFilter={filters.retailers}
+                  sort={sort}
+                  initialPage={savedPage}
+                  onPageChange={(newPage) => updateUrl(filters, sort, newPage)}
                   requireSearch
                />
             </View>

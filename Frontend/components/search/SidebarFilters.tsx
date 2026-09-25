@@ -9,6 +9,10 @@ type RetailerOption = {
 };
 
 type SidebarFiltersProps = {
+   initialFilters?: {
+      priceRange: { min: number | null; max: number | null };
+      retailers: string[];
+   };
    onFiltersChange?: (filters: {
       priceRange: { min: number | null; max: number | null };
       retailers: string[];
@@ -16,10 +20,9 @@ type SidebarFiltersProps = {
 };
 
 const RETAILERS: RetailerOption[] = [
-   { label: "Coles", value: "coles", count: 342 },
-   { label: "Woolworths", value: "woolworths", count: 318 },
-   { label: "ALDI", value: "aldi", count: 156 },
-   { label: "IGA", value: "iga", count: 89 },
+   { label: "Coles", value: "coles" },
+   { label: "Woolworths", value: "woolworths" },
+   { label: "IGA", value: "iga" },
 ];
 
 const PRICE_RANGES = [
@@ -32,12 +35,13 @@ const PRICE_RANGES = [
 
 export default function SidebarFilters({
    onFiltersChange,
+   initialFilters,
 }: SidebarFiltersProps) {
    const [priceRange, setPriceRange] = useState<{
       min: number | null;
       max: number | null;
-   }>({ min: null, max: null });
-   const [selectedRetailers, setSelectedRetailers] = useState<string[]>([]);
+   }>(initialFilters?.priceRange ?? { min: null, max: null });
+   const [selectedRetailers, setSelectedRetailers] = useState<string[]>(initialFilters?.retailers ?? []);
    const [isPriceRangeExpanded, setIsPriceRangeExpanded] = useState<boolean>(true);
    const [isRetailerExpanded, setIsRetailerExpanded] = useState<boolean>(true);
 

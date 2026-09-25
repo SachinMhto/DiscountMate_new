@@ -24,6 +24,11 @@ const getProductsValidation = [
     .trim()
     .escape()
     .isLength({ max: 50 }).withMessage('Category is too long.'),
+  query('search').optional().isString().trim().isLength({ max: 100 }),
+  query('sort').optional().isIn(['name_asc', 'name_desc', 'price_asc', 'price_desc']),
+  query('minPrice').optional().isFloat({ min: 0 }).toFloat(),
+  query('maxPrice').optional().isFloat({ min: 0 }).toFloat(),
+  query('retailers').optional().matches(/^(coles|woolworths|iga)(,(coles|woolworths|iga))*$/),
 ];
 
 const getProductValidation = [
